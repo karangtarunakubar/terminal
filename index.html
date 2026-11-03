@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CyberTerm IRC Server // v3.0.0</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600&family=VT323&display=swap');
+
+    :root {
+      --bg-color: #0d0f12;
+      --text-color: #00ff66;
+      --text-glow: 0 0 8px rgba(0, 255, 102, 0.6);
+      --dim-color: #008837;
+      --highlight: #00ffff;
+      --error-color: #ff3366;
+      --warning-color: #ffcc00;
+      --border-color: rgba(0, 255, 102, 0.25);
+    }
+
+    body.theme-matrix {
+      --bg-color: #0a0f0d;
+      --text-color: #00ff66;
+      --text-glow: 0 0 8px rgba(0, 255, 102, 0.6);
+      --dim-color: #008837;
+      --highlight: #66ffbb;
+    }
+
+    body.theme-amber {
+      --bg-color: #120d00;
+      --text-color: #ffb000;
+      --text-glow: 0 0 8px rgba(255, 176, 0, 0.6);
+      --dim-color: #996a00;
+      --highlight: #ffe066;
+    }
+
+    body.theme-cyberpunk {
+      --bg-color: #0f051d;
+      --text-color: #ff007f;
+      --text-glow: 0 0 8px rgba(255, 0, 127, 0.6);
+      --dim-color: #880044;
+      --highlight: #00f0ff;
+    }
+
+    body {
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      font-family: 'Fira Code', monospace;
+      overflow-x: hidden;
+    }
+
+    .ascii-art {
+      font-family: 'VT323', monospace;
+      line-height: 1;
+      text-shadow: var(--text-glow);
+    }
+
+    .terminal-text {
+      text-shadow: var(--text-glow);
+    }
+
+    .crt-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: linear-gradient(
+        rgba(18, 16, 16, 0) 50%, 
+        rgba(0, 0, 0, 0.25) 50%
+      ), linear-gradient(
+        90deg,
+        rgba(255, 0, 0, 0.03),
+        rgba(0, 255, 0, 0.01),
+        rgba(0, 0, 255, 0.03)
+      );
+      background-size: 100% 4px, 6px 100%;
+      pointer-events: none;
+      z-index: 50;
+      opacity: 1;
+      transition: opacity 0.3s ease;
+    }
+
+    .crt-overlay.disabled { opacity: 0; }
+
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg-color); }
+    ::-webkit-scrollbar-thumb { background: var(--dim-color); border-radius: 4px; }
+
+    .cursor-blink {
+      display: inline-block;
+      width: 8px;
+      height: 1.2em;
+      background-color: var(--text-color);
+      vertical-align: middle;
+      animation: blink 1s step-end infinite;
+      box-shadow: var(--text-glow);
+    }
+
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+    .cli-input {
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--text-color);
+      font-family: inherit;
+      width: 100%;
+      caret-color: transparent;
+    }
+
+    .shortcut-btn {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border-color);
+      color: var(--text-color);
+      transition: all 0.2s ease;
+    }
+
+    .shortcut-btn:hover {
+      background: var(--dim-color);
+      color: var(--bg-color);
+      box-shadow: var(--text-glow);
+    }
+
+    .text-dim { color: var(--dim-color); }
+    .text-highlight { color: var(--highlight); text-shadow: 0 0 6px var(--highlight); }
+    .text-error { color: var(--error-color); }
+    .text-warning { color: var(--warning-color); }
+    .border-custom { border-color: var(--border-color); }
+  </style>
+</head>
+<body class="theme-matrix min-h-screen flex flex-col justify-between p-2 sm:p-4 select-text">
+
+  <div id="crtOverlay" class="crt-overlay"></div>
+
+  <!-- Main Terminal Layout Window -->
+  <div class="max-w-7xl w-full mx-auto flex-grow flex flex-col my-auto h-[92vh]">
+    
+    <!-- Top Bar -->
+    <div class="border-t border-l border-r border-custom rounded-t-lg bg-black/50 px-4 py-2 flex items-center justify-between text-xs sm:text-sm">
+      <div class="flex items-center space-x-2">
+        <span class="w-3 h-3 rounded-full bg-red-500/80 inline-block"></span>
+        <span class="w-3 h-3 rounded-full bg-yellow-500/80 inline-block"></span>
+        <span class="w-3 h-3 rounded-full bg-green-500/80 inline-block"></span>
+        <span id="sessionStatus" class="ml-2 font-semibold text-highlight">STATUS: UNAUTHENTICATED</span>
+      </div>
+      <div class="flex items-center space-x-3 text-xs">
+        <button id="toggleCRT" class="hover:text-highlight transition"><i class="fa-solid fa-tv"></i> CRT: ON</button>
+        <span class="text-dim">|</span>
+        <span id="sessionTimer" class="text-dim">00:00:00</span>
+      </div>
+    </div>
+
+    <!-- Main Content Area: Sidebar + Chat Shell -->
+    <div class="border border-custom rounded-b-lg bg-black/70 flex flex-col md:flex-row flex-grow overflow-hidden">
+      
+      <!-- Side Panel (Channels / Groups / Users) -->
+      <div class="w-full md:w-64 border-b md:border-b-0 md:border-r border-custom p-3 flex flex-col justify-between bg-black/40 text-xs">
+        <div class="space-y-4">
+          <!-- User Profile Brief -->
+          <div class="border-b border-custom pb-3">
+            <div class="text-dim uppercase tracking-wider text-[10px]">Active Session</div>
+            <div id="sideUserHandle" class="font-bold text-highlight text-sm truncate">@guest</div>
+            <div id="sideUserStatus" class="text-dim truncate">Status: Offline</div>
+          </div>
+
+          <!-- Channel List -->
+          <div>
+            <div class="flex items-center justify-between text-dim uppercase tracking-wider text-[10px] mb-1">
+              <span>Channels</span>
+              <button onclick="executeShortcut('/create')" class="hover:text-highlight text-xs">+</button>
+            </div>
+            <div id="channelList" class="space-y-1">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+
+          <!-- Active Users in Channel -->
+          <div>
+            <div class="text-dim uppercase tracking-wider text-[10px] mb-1">Users in #<span id="currentChanLabel">lobby</span></div>
+            <div id="userList" class="space-y-1 max-h-36 overflow-y-auto">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+        </div>
+
+        <div class="pt-3 border-t border-custom text-[11px] text-dim">
+          Type <span class="text-highlight">/help</span> for command reference.
+        </div>
+      </div>
+
+      <!-- Main Terminal Chat Screen -->
+      <div id="terminalScreen" class="flex-grow p-4 flex flex-col justify-between overflow-y-auto" onclick="focusInput()">
+        <div id="terminalOutput" class="space-y-3 flex-grow overflow-y-auto max-h-[70vh] pr-2"></div>
+
+        <!-- CLI Command Input Line -->
+        <div class="flex items-center mt-3 pt-2 border-t border-custom/40 text-sm">
+          <span id="promptLabel" class="text-highlight font-semibold mr-2 flex-shrink-0">guest@cyberterm:~$</span>
+          <div class="relative flex-grow flex items-center">
+            <input type="text" id="cliInput" class="cli-input text-sm" autocomplete="off" spellcheck="false" autofocus>
+            <span id="customCursor" class="cursor-blink absolute"></span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Fast Action Dock -->
+    <div class="mt-3 flex flex-wrap gap-2 justify-center sm:justify-start items-center text-xs">
+      <button onclick="executeShortcut('/register')" class="shortcut-btn px-2.5 py-1 rounded flex items-center gap-1"><i class="fa-solid fa-user-plus"></i> /register</button>
+      <button onclick="executeShortcut('/login')" class="shortcut-btn px-2.5 py-1 rounded flex items-center gap-1"><i class="fa-solid fa-right-to-bracket"></i> /login</button>
+      <button onclick="executeShortcut('/nick')" class="shortcut-btn px-2.5 py-1 rounded flex items-center gap-1"><i class="fa-solid fa-id-card"></i> /nick</button>
+      <button onclick="executeShortcut('/create')" class="shortcut-btn px-2.5 py-1 rounded flex items-center gap-1"><i class="fa-solid fa-folder-plus"></i> /create</button>
+      <button onclick="executeShortcut('/join')" class="shortcut-btn px-2.5 py-1 rounded flex items-center gap-1"><i class="fa-solid fa-right-to-group"></i> /join</button>
+      <button onclick="executeShortcut('/list')" class="shortcut-btn px-2.5 py-1 rounded flex items-center gap-1"><i class="fa-solid fa-list"></i> /list</button>
+      <button onclick="executeShortcut('/theme')" class="shortcut-btn px-2.5 py-1 rounded flex items-center gap-1"><i class="fa-solid fa-palette"></i> /theme</button>
+      <button onclick="executeShortcut('/clear')" class="shortcut-btn px-2.5 py-1 rounded flex items-center gap-1 opacity-70"><i class="fa-solid fa-trash"></i> /clear</button>
+    </div>
+
+  </div>
+
+  <script>
+    // --- Application State ---
+    const STATE = {
+      currentUser: null, // { username, nickname, status }
+      registeredUsers: {
+        'admin': { password: '123', nickname: 'SystemOperator', status: 'Online & Monitoring' },
+        'cyber_ghost': { password: '123', nickname: 'GhostInTheShell', status: 'In cyberspace' }
+      },
+      currentChannel: 'general',
+      channels: {
+        'general': { name: 'general', creator: 'admin', members: ['admin', 'cyber_ghost'], messages: [] },
+        'dev-lounge': { name: 'dev-lounge', creator: 'admin', members: ['admin'], messages: [] }
+      },
+      history: [],
+      historyIdx: -1,
+      startTime: Date.now()
+    };
+
+    const THEMES = ['matrix', 'amber', 'cyberpunk'];
+    let themeIdx = 0;
+
+    // --- DOM Refs ---
+    const cliInput = document.getElementById('cliInput');
+    const customCursor = document.getElementById('customCursor');
+    const terminalOutput = document.getElementById('terminalOutput');
+    const crtOverlay = document.getElementById('crtOverlay');
+    const toggleCRTBtn = document.getElementById('toggleCRT');
+    const sessionTimer = document.getElementById('sessionTimer');
+    const promptLabel = document.getElementById('promptLabel');
+    const sideUserHandle = document.getElementById('sideUserHandle');
+    const sideUserStatus = document.getElementById('sideUserStatus');
+    const channelList = document.getElementById('channelList');
+    const userList = document.getElementById('userList');
+    const currentChanLabel = document.getElementById('currentChanLabel');
+    const sessionStatus = document.getElementById('sessionStatus');
+
+    // System Timer
+    setInterval(() => {
+      const elapsed = Math.floor((Date.now() - STATE.startTime) / 1000);
+      const hrs = String(Math.floor(elapsed / 3600)).padStart(2, '0');
+      const mins = String(Math.floor((elapsed % 3600) / 60)).padStart(2, '0');
+      const secs = String(elapsed % 60).padStart(2, '0');
+      sessionTimer.textContent = `${hrs}:${mins}:${secs}`;
+    }, 1000);
+
+    window.onload = () => {
+      printBanner();
+      renderSidebar();
+      focusInput();
+      updateCursor();
+    };
+
+    function focusInput() { cliInput.focus(); }
+
+    function updateCursor() {
+      const textWidth = getTextWidth(cliInput.value, '14px "Fira Code", monospace');
+      customCursor.style.left = `${textWidth}px`;
+    }
+
+    function getTextWidth(text, font) {
+      const canvas = getTextWidth.canvas || (getTextWidth.canvas = document.createElement("canvas"));
+      const context = canvas.getContext("2d");
+      context.font = font;
+      return context.measureText(text).width;
+    }
+
+    function printLine(html) {
+      const line = document.createElement('div');
+      line.className = 'terminal-text';
+      line.innerHTML = html;
+      terminalOutput.appendChild(line);
+      const screen = document.getElementById('terminalScreen');
+      screen.scrollTop = screen.scrollHeight;
+    }
+
+    function printBanner() {
+      printLine(`<div class="text-highlight font-bold text-xs sm:text-sm">
+  ___ _   _ ___ _____ _____ _   _ _____     ___ ____   ____ 
+ / __| | | | _ ) __| _ \_   _| |_| |_   _|   |_ _|  _ \ / ___|
+| (__| |_| | _ \ _||   / | | |  _  | | |      | || |_) | |    
+ \___|\___/|___/___|_|_\ |_| |_| |_| |_|     |___|_ <  \____|
+      </div>`);
+      printLine(`<div class="text-xs">System initialized. Server: <span class="text-highlight">node-us-west-01</span></div>`);
+      printLine(`<div class="text-xs text-dim mb-2">Create an account with <span class="text-highlight">/register &lt;user&gt; &lt;pass&gt;</span> or log in with <span class="text-highlight">/login &lt;user&gt; &lt;pass&gt;</span>. Type <span class="text-highlight">/help</span> for command list.</div>`);
+    }
+
+    // Input handlers
+    cliInput.addEventListener('input', updateCursor);
+    cliInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        const val = cliInput.value.trim();
+        if (val) {
+          STATE.history.push(val);
+          STATE.historyIdx = STATE.history.length;
+          handleCommand(val);
+        }
+        cliInput.value = '';
+        updateCursor();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (STATE.history.length > 0 && STATE.historyIdx > 0) {
+          STATE.historyIdx--;
+          cliInput.value = STATE.history[STATE.historyIdx];
+          updateCursor();
+        }
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (STATE.historyIdx < STATE.history.length - 1) {
+          STATE.historyIdx++;
+          cliInput.value = STATE.history[STATE.historyIdx];
+        } else {
+          STATE.historyIdx = STATE.history.length;
+          cliInput.value = '';
+        }
+        updateCursor();
+      }
+    });
+
+    function executeShortcut(cmd) {
+      cliInput.value = cmd + ' ';
+      focusInput();
+      updateCursor();
+    }
+
+    // --- Core Commands Processor ---
+    function handleCommand(rawCmd) {
+      if (!rawCmd.startsWith('/')) {
+        // Chatting in current channel
+        if (!STATE.currentUser) {
+          printLine(`<div class="text-error"><i class="fa-solid fa-lock"></i> Authentication required to send messages. Please /login or /register first.</div>`);
+          return;
+        }
+        broadcastMessage(STATE.currentChannel, STATE.currentUser.nickname || STATE.currentUser.username, rawCmd);
+        return;
+      }
+
+      printLine(`<div><span class="text-highlight">${promptLabel.textContent}</span> ${escapeHTML(rawCmd)}</div>`);
+
+      const parts = rawCmd.slice(1).trim().split(/\s+/);
+      const cmd = parts[0].toLowerCase();
+      const args = parts.slice(1);
+
+      switch (cmd) {
+        case 'help':
+          renderHelp();
+          break;
+        case 'register':
+          cmdRegister(args);
+          break;
+        case 'login':
+          cmdLogin(args);
+          break;
+        case 'logout':
+          cmdLogout();
+          break;
+        case 'nick':
+          cmdSetNickname(args);
+          break;
+        case 'status':
+          cmdSetStatus(args);
+          break;
+        case 'create':
+          cmdCreateChannel(args);
+          break;
+        case 'join':
+          cmdJoinChannel(args);
+          break;
+        case 'list':
+          cmdListChannels();
+          break;
+        case 'msg':
+          cmdDirectMessage(args);
+          break;
+        case 'theme':
+          cmdTheme();
+          break;
+        case 'clear':
+          terminalOutput.innerHTML = '';
+          break;
+        default:
+          printLine(`<div class="text-error">Unknown command: /${cmd}. Type <span class="text-highlight">/help</span> for commands.</div>`);
+      }
+    }
+
+    // --- Command Implementations ---
+    function renderHelp() {
+      const cmds = [
+        ['/register <user> <pass>', 'Create a new user account'],
+        ['/login <user> <pass>', 'Log in to existing server account'],
+        ['/logout', 'Log out of current session'],
+        ['/nick <nickname>', 'Set display handle/nickname'],
+        ['/status <text>', 'Set custom profile status string'],
+        ['/create <channel>', 'Create a new server chat channel'],
+        ['/join <channel>', 'Join channel room & start chatting'],
+        ['/list', 'List available server channels'],
+        ['/msg <user> <message>', 'Send direct private message'],
+        ['/theme', 'Cycle CRT color theme'],
+        ['/clear', 'Clear console screen']
+      ];
+
+      let html = `<div class="font-bold text-highlight mb-1">Server Terminal Commands:</div><div class="space-y-1 text-xs sm:text-sm">`;
+      cmds.forEach(([c, d]) => {
+        html += `<div><span class="text-highlight font-semibold inline-block w-48">${c}</span> <span class="text-dim">${d}</span></div>`;
+      });
+      html += `</div>`;
+      printLine(html);
+    }
+
+    function cmdRegister(args) {
+      if (args.length < 2) {
+        printLine(`<div class="text-warning">Usage: /register &lt;username&gt; &lt;password&gt;</div>`);
+        return;
+      }
+      const [username, password] = args;
+      if (STATE.registeredUsers[username]) {
+        printLine(`<div class="text-error">Username '${username}' is already taken.</div>`);
+        return;
+      }
+
+      STATE.registeredUsers[username] = {
+        password: password,
+        nickname: username,
+        status: 'Active'
+      };
+
+      printLine(`<div class="text-highlight"><i class="fa-solid fa-circle-check"></i> Registration successful! You can now run: <span class="underline">/login ${username} ${password}</span></div>`);
+    }
+
+    function cmdLogin(args) {
+      if (args.length < 2) {
+        printLine(`<div class="text-warning">Usage: /login &lt;username&gt; &lt;password&gt;</div>`);
+        return;
+      }
+      const [username, password] = args;
+      const account = STATE.registeredUsers[username];
+
+      if (!account || account.password !== password) {
+        printLine(`<div class="text-error"><i class="fa-solid fa-circle-xmark"></i> Invalid username or password.</div>`);
+        return;
+      }
+
+      STATE.currentUser = { username, nickname: account.nickname, status: account.status };
+      
+      // Auto-join general channel if not member
+      if (!STATE.channels['general'].members.includes(username)) {
+        STATE.channels['general'].members.push(username);
+      }
+
+      promptLabel.textContent = `${account.nickname}@cyberterm:~$`;
+      sessionStatus.textContent = `STATUS: ONLINE (${username})`;
+      printLine(`<div class="text-highlight"><i class="fa-solid fa-plug"></i> Authenticated as @${account.nickname} (${username}). Joined #general.</div>`);
+      
+      renderSidebar();
+    }
+
+    function cmdLogout() {
+      if (!STATE.currentUser) {
+        printLine(`<div class="text-warning">No active session to log out.</div>`);
+        return;
+      }
+      printLine(`<div class="text-dim">Logged out session for @${STATE.currentUser.username}.</div>`);
+      STATE.currentUser = null;
+      promptLabel.textContent = `guest@cyberterm:~$`;
+      sessionStatus.textContent = `STATUS: UNAUTHENTICATED`;
+      renderSidebar();
+    }
+
+    function cmdSetNickname(args) {
+      if (!STATE.currentUser) return authErr();
+      if (!args[0]) {
+        printLine(`<div class="text-warning">Usage: /nick &lt;new_nickname&gt;</div>`);
+        return;
+      }
+      const oldNick = STATE.currentUser.nickname;
+      const newNick = args[0];
+      STATE.currentUser.nickname = newNick;
+      STATE.registeredUsers[STATE.currentUser.username].nickname = newNick;
+      promptLabel.textContent = `${newNick}@cyberterm:~$`;
+
+      printLine(`<div class="text-highlight">Nickname updated from ${oldNick} to <b>${newNick}</b>.</div>`);
+      renderSidebar();
+    }
+
+    function cmdSetStatus(args) {
+      if (!STATE.currentUser) return authErr();
+      if (args.length === 0) {
+        printLine(`<div class="text-warning">Usage: /status &lt;status_text&gt;</div>`);
+        return;
+      }
+      const statusText = args.join(' ');
+      STATE.currentUser.status = statusText;
+      STATE.registeredUsers[STATE.currentUser.username].status = statusText;
+
+      printLine(`<div class="text-highlight">Status message updated to: "${statusText}".</div>`);
+      renderSidebar();
+    }
+
+    function cmdCreateChannel(args) {
+      if (!STATE.currentUser) return authErr();
+      if (!args[0]) {
+        printLine(`<div class="text-warning">Usage: /create &lt;channel_name&gt;</div>`);
+        return;
+      }
+      const chanName = args[0].toLowerCase().replace(/[^a-z0-9-]/g, '');
+      if (STATE.channels[chanName]) {
+        printLine(`<div class="text-error">Channel #${chanName} already exists. Use <span class="text-highlight">/join ${chanName}</span></div>`);
+        return;
+      }
+
+      STATE.channels[chanName] = {
+        name: chanName,
+        creator: STATE.currentUser.username,
+        members: [STATE.currentUser.username],
+        messages: []
+      };
+
+      printLine(`<div class="text-highlight"><i class="fa-solid fa-folder-plus"></i> Channel #${chanName} created successfully! Switch with <span class="underline">/join ${chanName}</span></div>`);
+      renderSidebar();
+    }
+
+    function cmdJoinChannel(args) {
+      if (!STATE.currentUser) return authErr();
+      if (!args[0]) {
+        printLine(`<div class="text-warning">Usage: /join &lt;channel_name&gt;</div>`);
+        return;
+      }
+      const chanName = args[0].toLowerCase().replace('#', '');
+      if (!STATE.channels[chanName]) {
+        printLine(`<div class="text-error">Channel #${chanName} does not exist. Create it with <span class="text-highlight">/create ${chanName}</span></div>`);
+        return;
+      }
+
+      if (!STATE.channels[chanName].members.includes(STATE.currentUser.username)) {
+        STATE.channels[chanName].members.push(STATE.currentUser.username);
+      }
+
+      STATE.currentChannel = chanName;
+      currentChanLabel.textContent = chanName;
+      printLine(`<div class="text-highlight"><i class="fa-solid fa-right-to-group"></i> Switched to channel #${chanName}.</div>`);
+      
+      // Load history
+      STATE.channels[chanName].messages.forEach(msg => {
+        printLine(msg);
+      });
+
+      renderSidebar();
+    }
+
+    function cmdListChannels() {
+      let html = `<div class="font-bold text-highlight mb-1">Server Channels:</div><div class="space-y-1">`;
+      Object.keys(STATE.channels).forEach(c => {
+        const chan = STATE.channels[c];
+        html += `<div class="text-xs sm:text-sm"><span class="text-highlight font-semibold">#${chan.name}</span> <span class="text-dim">(${chan.members.length} members) - Created by @${chan.creator}</span></div>`;
+      });
+      html += `</div>`;
+      printLine(html);
+    }
+
+    function cmdDirectMessage(args) {
+      if (!STATE.currentUser) return authErr();
+      if (args.length < 2) {
+        printLine(`<div class="text-warning">Usage: /msg &lt;username&gt; &lt;message&gt;</div>`);
+        return;
+      }
+      const targetUser = args[0];
+      const messageText = args.slice(1).join(' ');
+
+      if (!STATE.registeredUsers[targetUser]) {
+        printLine(`<div class="text-error">User @${targetUser} not found on this server.</div>`);
+        return;
+      }
+
+      printLine(`<div class="text-warning">[PM to @${targetUser}]: ${escapeHTML(messageText)}</div>`);
+    }
+
+    function cmdTheme() {
+      themeIdx = (themeIdx + 1) % THEMES.length;
+      document.body.className = `theme-${THEMES[themeIdx]} min-h-screen flex flex-col justify-between p-2 sm:p-4 select-text`;
+      printLine(`<div class="text-highlight">Theme updated to: ${THEMES[themeIdx]}</div>`);
+    }
+
+    function broadcastMessage(channelName, senderNick, text) {
+      const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const formatted = `<div><span class="text-dim">[${timestamp}]</span> <span class="text-highlight font-semibold">&lt;${senderNick}&gt;</span> ${escapeHTML(text)}</div>`;
+      
+      STATE.channels[channelName].messages.push(formatted);
+      printLine(formatted);
+    }
+
+    function authErr() {
+      printLine(`<div class="text-error"><i class="fa-solid fa-triangle-exclamation"></i> You must be logged in to execute this operation. Run <span class="text-highlight">/login</span> or <span class="text-highlight">/register</span> first.</div>`);
+    }
+
+    function renderSidebar() {
+      // User Card
+      if (STATE.currentUser) {
+        sideUserHandle.textContent = `@${STATE.currentUser.nickname}`;
+        sideUserStatus.textContent = `Status: ${STATE.currentUser.status}`;
+      } else {
+        sideUserHandle.textContent = `@guest`;
+        sideUserStatus.textContent = `Status: Offline`;
+      }
+
+      // Channels
+      channelList.innerHTML = '';
+      Object.keys(STATE.channels).forEach(c => {
+        const isActive = c === STATE.currentChannel;
+        const div = document.createElement('div');
+        div.className = `cursor-pointer px-2 py-1 rounded flex items-center justify-between ${isActive ? 'bg-white/10 text-highlight font-semibold' : 'text-dim hover:text-white'}`;
+        div.innerHTML = `<span>#${c}</span> <span class="text-[10px]">${STATE.channels[c].members.length}</span>`;
+        div.onclick = () => {
+          if (STATE.currentUser) {
+            cmdJoinChannel([c]);
+          } else {
+            authErr();
+          }
+        };
+        channelList.appendChild(div);
+      });
+
+      // User List for current channel
+      userList.innerHTML = '';
+      const currentChanObj = STATE.channels[STATE.currentChannel];
+      if (currentChanObj) {
+        currentChanObj.members.forEach(u => {
+          const uObj = STATE.registeredUsers[u] || { nickname: u, status: 'Online' };
+          const div = document.createElement('div');
+          div.className = 'flex items-center space-x-2 text-xs py-0.5';
+          div.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-green-400"></span><span class="text-highlight">${uObj.nickname}</span> <span class="text-dim text-[10px]">(${u})</span>`;
+          userList.appendChild(div);
+        });
+      }
+    }
+
+    function escapeHTML(str) {
+      return str.replace(/[&<>'"]/g, tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag));
+    }
+
+    toggleCRTBtn.addEventListener('click', () => {
+      crtOverlay.classList.toggle('disabled');
+      toggleCRTBtn.innerHTML = `<i class="fa-solid fa-tv"></i> CRT: ${crtOverlay.classList.contains('disabled') ? 'OFF' : 'ON'}`;
+    });
+  </script>
+</body>
+</html>
